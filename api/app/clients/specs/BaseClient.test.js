@@ -48,9 +48,20 @@ jest.mock('~/models', () => ({
   deleteFiles: jest.fn(),
   getFiles: jest.fn(),
   updateFileUsage: jest.fn(),
+  getMultiplier: jest.fn(({ tokenType }) => (tokenType === 'completion' ? 2 : 1)),
+  findBalanceByUser: jest.fn().mockResolvedValue({ tokenCredits: 1000000 }),
+  createAutoRefillTransaction: jest.fn(),
+  upsertBalanceFields: jest.fn(),
 }));
 
-const { getConvo, getFiles, getMessages, saveConvo, saveMessage } = require('~/models');
+const {
+  getConvo,
+  getFiles,
+  getMessages,
+  saveConvo,
+  saveMessage,
+  findBalanceByUser,
+} = require('~/models');
 
 jest.mock('@librechat/agents', () => {
   const actual = jest.requireActual('@librechat/agents');
@@ -2086,6 +2097,27 @@ describe('BaseClient', () => {
         }),
       );
     });
+  });
+
+  test('checks the combined estimated prompt and completion cost before sending', async () => {
+    TestClient.options.endpoint = 'openAI';
+    TestClient.options.req = {
+      user: { id: 'user-1' },
+      config: { balance: { enabled: true } },
+    };
+    TestClient.options.res = {};
+    TestClient.user = 'user-1';
+    TestClient.maxContextTokens = 1000;
+    TestClient.modelOptions = { model: 'gpt-test', max_tokens: 200 };
+    TestClient.buildMessages.mockResolvedValue({
+      prompt: [],
+      tokenCountMap: {},
+      promptTokens: 100,
+    });
+    findBalanceByUser.mockResolvedValueOnce({ tokenCredits: 299 });
+
+    await expect(TestClient.sendMessage('Hello')).rejects.toThrow();
+    expect(TestClient.sendCompletion).not.toHaveBeenCalled();
   });
 
   /**

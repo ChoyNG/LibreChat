@@ -189,6 +189,24 @@ describe('Regular Token Spending Tests', () => {
     expect(updatedBalance?.tokenCredits).toBeCloseTo(initialBalance - expectedCost, 0);
   });
 
+  test('records a negative balance instead of silently discarding overspend', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    await Balance.create({ user: userId, tokenCredits: 100 });
+
+    await spendTokens(
+      {
+        user: userId,
+        model: 'billing-test-model',
+        endpointTokenConfig: { 'billing-test-model': { completion: 1 } },
+        balance: { enabled: true },
+      },
+      { completionTokens: 150 },
+    );
+
+    const updatedBalance = await Balance.findOne({ user: userId });
+    expect(updatedBalance?.tokenCredits).toBe(-50);
+  });
+
   test('spendTokens should not update balance when balance feature is disabled', async () => {
     // Arrange: Balance config is now passed directly in txData
     const userId = new mongoose.Types.ObjectId();

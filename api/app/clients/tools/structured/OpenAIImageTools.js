@@ -13,7 +13,10 @@ const {
   applyAxiosProxyConfig,
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const { recordOpenAIImageUsage } = require('~/server/services/Billing/OpenAIImageBilling');
+const {
+  checkOpenAIImageBalance,
+  recordOpenAIImageUsage,
+} = require('~/server/services/Billing/OpenAIImageBilling');
 const { getFiles } = require('~/models');
 
 const displayMessage =
@@ -127,6 +130,12 @@ function createOpenAIImageTools(fields = {}) {
       if (!prompt) {
         throw new Error('Missing required field: prompt');
       }
+      try {
+        await checkOpenAIImageBalance({ req, model: imageModel, n });
+      } catch (error) {
+        logger.warn('[ImageGenOAI] Insufficient balance for image generation', error);
+        return returnValue('Insufficient balance to generate this image.');
+      }
       const clientConfig = { ...closureConfig };
       const proxyDispatcher = getProxyDispatcher();
       if (proxyDispatcher) {
@@ -210,15 +219,17 @@ Error Message: ${error.message}`);
       const messageId =
         runnableConfig?.configurable?.run_id ??
         runnableConfig?.configurable?.requestBody?.messageId;
-      recordOpenAIImageUsage({
-        req,
-        model: imageModel,
-        usage: resp.usage,
-        conversationId,
-        messageId,
-      }).catch((error) => {
+      try {
+        await recordOpenAIImageUsage({
+          req,
+          model: imageModel,
+          usage: resp.usage,
+          conversationId,
+          messageId,
+        });
+      } catch (error) {
         logger.error('[ImageGenOAI] Failed to record image usage:', error);
-      });
+      }
 
       const content = [
         {
@@ -248,6 +259,12 @@ Error Message: ${error.message}`);
     async ({ prompt, image_ids, quality = 'auto', size = 'auto' }, runnableConfig) => {
       if (!prompt) {
         throw new Error('Missing required field: prompt');
+      }
+      try {
+        await checkOpenAIImageBalance({ req, model: imageModel, n: 1 });
+      } catch (error) {
+        logger.warn('[ImageEditOAI] Insufficient balance for image editing', error);
+        return returnValue('Insufficient balance to edit this image.');
       }
 
       const clientConfig = { ...closureConfig };
@@ -394,15 +411,17 @@ Error Message: ${error.message}`);
         const messageId =
           runnableConfig?.configurable?.run_id ??
           runnableConfig?.configurable?.requestBody?.messageId;
-        recordOpenAIImageUsage({
-          req,
-          model: imageModel,
-          usage: response.data.usage,
-          conversationId,
-          messageId,
-        }).catch((error) => {
+        try {
+          await recordOpenAIImageUsage({
+            req,
+            model: imageModel,
+            usage: response.data.usage,
+            conversationId,
+            messageId,
+          });
+        } catch (error) {
           logger.error('[ImageEditOAI] Failed to record image usage:', error);
-        });
+        }
 
         const content = [
           {

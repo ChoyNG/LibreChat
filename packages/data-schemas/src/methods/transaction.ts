@@ -227,8 +227,7 @@ export function createTransactionMethods(
       try {
         currentBalanceDoc = await Balance.findOne({ user }).lean<IBalance>();
         const currentCredits = currentBalanceDoc ? currentBalanceDoc.tokenCredits : 0;
-        const potentialNewCredits = currentCredits + incrementValue;
-        const newCredits = Math.max(0, potentialNewCredits);
+        const newCredits = currentCredits + incrementValue;
 
         const updatePayload = {
           $set: {

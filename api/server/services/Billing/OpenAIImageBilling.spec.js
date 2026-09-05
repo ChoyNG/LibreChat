@@ -1,10 +1,12 @@
 const { logger } = require('@librechat/data-schemas');
-const { getBalanceConfig, getTransactionsConfig } = require('@librechat/api');
-const { spendTokens } = require('~/models');
+const { checkBalance, getBalanceConfig, getTransactionsConfig } = require('@librechat/api');
+const db = require('~/models');
 const {
   resolveImagePricing,
   extractImageUsage,
   calculateImageCredits,
+  estimateImageCredits,
+  checkOpenAIImageBalance,
   recordOpenAIImageUsage,
 } = require('./OpenAIImageBilling');
 
@@ -12,19 +14,27 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { warn: jest.fn() },
 }));
 jest.mock('@librechat/api', () => ({
+  checkBalance: jest.fn(() => Promise.resolve(true)),
   getBalanceConfig: jest.fn(() => ({ enabled: true })),
   getTransactionsConfig: jest.fn(() => ({ enabled: true })),
 }));
 jest.mock('~/models', () => ({
   spendTokens: jest.fn(),
+  getMultiplier: jest.fn(() => 1),
+  findBalanceByUser: jest.fn(),
+  createAutoRefillTransaction: jest.fn(),
+  upsertBalanceFields: jest.fn(),
 }));
+jest.mock('~/cache', () => ({ logViolation: jest.fn() }));
 
 describe('OpenAIImageBilling', () => {
   const originalMultiplier = process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER;
+  const originalMaxCost = process.env.IMAGE_GEN_OAI_MAX_COST_USD;
 
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER;
+    delete process.env.IMAGE_GEN_OAI_MAX_COST_USD;
   });
 
   afterAll(() => {
@@ -32,6 +42,11 @@ describe('OpenAIImageBilling', () => {
       delete process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER;
     } else {
       process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER = originalMultiplier;
+    }
+    if (originalMaxCost == null) {
+      delete process.env.IMAGE_GEN_OAI_MAX_COST_USD;
+    } else {
+      process.env.IMAGE_GEN_OAI_MAX_COST_USD = originalMaxCost;
     }
   });
 
@@ -117,7 +132,7 @@ describe('OpenAIImageBilling', () => {
 
     expect(getBalanceConfig).toHaveBeenCalledWith(req.config);
     expect(getTransactionsConfig).toHaveBeenCalledWith(req.config);
-    expect(spendTokens).toHaveBeenCalledWith(
+    expect(db.spendTokens).toHaveBeenCalledWith(
       {
         user: 'user-1',
         model: 'gpt-image-2',
@@ -129,6 +144,32 @@ describe('OpenAIImageBilling', () => {
         endpointTokenConfig: { 'gpt-image-2': { completion: 1 } },
       },
       { completionTokens: 100 },
+    );
+  });
+
+  it('estimates a configurable per-image upper bound', () => {
+    process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER = '1.5';
+    process.env.IMAGE_GEN_OAI_MAX_COST_USD = '0.2';
+    expect(estimateImageCredits({ model: 'gpt-image-2', n: 2 })).toBe(600000);
+  });
+
+  it('checks image balance using the estimated credits at a fixed rate of one', async () => {
+    const req = { user: { id: 'user-1' }, config: { balance: { enabled: true } }, res: {} };
+    await checkOpenAIImageBalance({ req, model: 'gpt-image-2', n: 1 });
+    expect(checkBalance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        req,
+        res: req.res,
+        txData: expect.objectContaining({
+          user: 'user-1',
+          amount: 250000,
+          endpointTokenConfig: { 'gpt-image-2': { completion: 1 } },
+        }),
+      }),
+      expect.objectContaining({
+        getMultiplier: db.getMultiplier,
+        findBalanceByUser: db.findBalanceByUser,
+      }),
     );
   });
 });

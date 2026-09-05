@@ -904,17 +904,45 @@ class BaseClient {
         balanceConfig?.enabled &&
         supportsBalanceCheck[this.options.endpointType ?? this.options.endpoint]
       ) {
+        const configuredMaxCompletionTokens = [
+          this.modelOptions?.max_tokens,
+          this.modelOptions?.maxTokens,
+          this.modelOptions?.max_completion_tokens,
+          this.modelOptions?.max_output_tokens,
+          this.modelOptions?.modelKwargs?.max_completion_tokens,
+          this.modelOptions?.modelKwargs?.max_output_tokens,
+          this.options?.maxTokens,
+        ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+        const remainingContextTokens = Math.max(
+          Number(this.maxContextTokens ?? promptTokens) - promptTokens,
+          0,
+        );
+        const maxCompletionTokens = Math.min(
+          Number(configuredMaxCompletionTokens ?? remainingContextTokens),
+          remainingContextTokens,
+        );
+        const model = this.modelOptions?.model ?? this.model;
+        const pricingContext = {
+          endpoint: this.options.endpoint,
+          model,
+          endpointTokenConfig: this.options.endpointTokenConfig,
+        };
+        const estimatedCredits = Math.ceil(
+          promptTokens * db.getMultiplier({ ...pricingContext, tokenType: 'prompt' }) +
+            maxCompletionTokens * db.getMultiplier({ ...pricingContext, tokenType: 'completion' }),
+        );
+        const precheckModel = `balance-precheck:${model}`;
         await checkBalance(
           {
             req: this.options.req,
             res: this.options.res,
             txData: {
               user: this.user,
-              tokenType: 'prompt',
-              amount: promptTokens,
+              tokenType: 'completion',
+              amount: estimatedCredits,
               endpoint: this.options.endpoint,
-              model: this.modelOptions?.model ?? this.model,
-              endpointTokenConfig: this.options.endpointTokenConfig,
+              model: precheckModel,
+              endpointTokenConfig: { [precheckModel]: { completion: 1 } },
             },
           },
           {

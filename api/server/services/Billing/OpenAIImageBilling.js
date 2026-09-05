@@ -1,6 +1,7 @@
 const { logger } = require('@librechat/data-schemas');
-const { getBalanceConfig, getTransactionsConfig } = require('@librechat/api');
-const { spendTokens } = require('~/models');
+const { checkBalance, getBalanceConfig, getTransactionsConfig } = require('@librechat/api');
+const { logViolation } = require('~/cache');
+const db = require('~/models');
 
 const IMAGE_PRICING = Object.freeze({
   'gpt-image-2': { textInput: 5, imageInput: 8, imageOutput: 30 },
@@ -73,6 +74,60 @@ function calculateImageCredits({ model, usage }) {
   return Math.ceil(baseCredits * multiplier);
 }
 
+function getBillingMultiplier() {
+  const configuredMultiplier = Number(process.env.IMAGE_GEN_OAI_BILLING_MULTIPLIER ?? 1);
+  return Number.isFinite(configuredMultiplier) && configuredMultiplier >= 0
+    ? configuredMultiplier
+    : 1;
+}
+
+function estimateImageCredits({ model, n = 1 }) {
+  if (!resolveImagePricing(model)) {
+    logger.warn(`[OpenAIImageBilling] Cannot estimate unknown image model pricing: ${model}`);
+    return null;
+  }
+
+  const configuredMaxCost = Number(process.env.IMAGE_GEN_OAI_MAX_COST_USD ?? 0.25);
+  const maxCostUsd =
+    Number.isFinite(configuredMaxCost) && configuredMaxCost > 0 ? configuredMaxCost : 0.25;
+  const imageCount = Math.min(Math.max(Math.floor(Number(n) || 1), 1), 10);
+  return Math.ceil(maxCostUsd * 1_000_000 * imageCount * getBillingMultiplier());
+}
+
+async function checkOpenAIImageBalance({ req, model, n }) {
+  const balanceConfig = getBalanceConfig(req?.config);
+  if (!balanceConfig?.enabled) {
+    return;
+  }
+
+  const estimatedCredits = estimateImageCredits({ model, n });
+  if (!estimatedCredits) {
+    return;
+  }
+
+  await checkBalance(
+    {
+      req,
+      res: req?.res,
+      txData: {
+        user: req?.user?.id,
+        model,
+        tokenType: 'completion',
+        amount: estimatedCredits,
+        endpointTokenConfig: { [model]: { completion: 1 } },
+      },
+    },
+    {
+      logViolation,
+      getMultiplier: db.getMultiplier,
+      findBalanceByUser: db.findBalanceByUser,
+      createAutoRefillTransaction: db.createAutoRefillTransaction,
+      balanceConfig,
+      upsertBalanceFields: db.upsertBalanceFields,
+    },
+  );
+}
+
 async function recordOpenAIImageUsage({ req, model, usage, conversationId, messageId }) {
   const credits = calculateImageCredits({ model, usage });
   if (!credits) {
@@ -91,7 +146,7 @@ async function recordOpenAIImageUsage({ req, model, usage, conversationId, messa
     return;
   }
 
-  await spendTokens(
+  await db.spendTokens(
     {
       user,
       model,
@@ -116,5 +171,7 @@ module.exports = {
   resolveImagePricing,
   extractImageUsage,
   calculateImageCredits,
+  estimateImageCredits,
+  checkOpenAIImageBalance,
   recordOpenAIImageUsage,
 };

@@ -1,7 +1,10 @@
 const axios = require('axios');
 const OpenAI = require('openai');
 const { logger } = require('@librechat/data-schemas');
-const { recordOpenAIImageUsage } = require('~/server/services/Billing/OpenAIImageBilling');
+const {
+  checkOpenAIImageBalance,
+  recordOpenAIImageUsage,
+} = require('~/server/services/Billing/OpenAIImageBilling');
 const createOpenAIImageTools = require('~/app/clients/tools/structured/OpenAIImageTools');
 
 jest.mock('axios');
@@ -40,6 +43,7 @@ jest.mock('~/server/services/Files/strategies', () => ({
 }));
 
 jest.mock('~/server/services/Billing/OpenAIImageBilling', () => ({
+  checkOpenAIImageBalance: jest.fn(() => Promise.resolve()),
   recordOpenAIImageUsage: jest.fn(() => Promise.resolve()),
 }));
 
@@ -260,7 +264,7 @@ describe('OpenAIImageTools - IMAGE_GEN_OAI_MODEL environment variable', () => {
     expect(recordOpenAIImageUsage).not.toHaveBeenCalled();
   });
 
-  it('returns the image when asynchronous billing fails', async () => {
+  it('returns the image when billing fails', async () => {
     recordOpenAIImageUsage.mockRejectedValueOnce(new Error('billing failed'));
     const [imageGenTool] = createOpenAIImageTools({
       isAgent: true,
@@ -275,5 +279,20 @@ describe('OpenAIImageTools - IMAGE_GEN_OAI_MODEL environment variable', () => {
       '[ImageGenOAI] Failed to record image usage:',
       expect.any(Error),
     );
+  });
+
+  it('does not call OpenAI when the image balance precheck fails', async () => {
+    checkOpenAIImageBalance.mockRejectedValueOnce(new Error('insufficient balance'));
+    const mockGenerate = jest.fn();
+    OpenAI.mockImplementation(() => ({ images: { generate: mockGenerate } }));
+    const [imageGenTool] = createOpenAIImageTools({
+      isAgent: true,
+      req: { user: { id: 'test-user' } },
+    });
+
+    const result = await imageGenTool.func({ prompt: 'test prompt' });
+
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(result[0]).toContain('Insufficient balance');
   });
 });
