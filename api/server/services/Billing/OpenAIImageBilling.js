@@ -4,6 +4,8 @@ const { logViolation } = require('~/cache');
 const db = require('~/models');
 
 const IMAGE_PRICING = Object.freeze({
+  'gpt-image-2.5-flare': { textInput: 5, imageInput: 8, imageOutput: 30 },
+  'gpt-image-2.5-sunburst': { textInput: 5, imageInput: 8, imageOutput: 30 },
   'gpt-image-2': { textInput: 5, imageInput: 8, imageOutput: 30 },
   'gpt-image-1.5': { textInput: 5, imageInput: 8, imageOutput: 32 },
   'gpt-image-1-mini': { textInput: 2, imageInput: 2.5, imageOutput: 8 },

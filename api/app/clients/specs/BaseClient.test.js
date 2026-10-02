@@ -2050,6 +2050,44 @@ describe('BaseClient', () => {
   });
 
   describe('recordTokenUsage model assignment', () => {
+    test('does not estimate charges for an error-only response without reported usage', async () => {
+      TestClient.options.endpoint = 'agents';
+      TestClient.getStreamUsage = jest.fn().mockReturnValue(null);
+      TestClient.getTokenCountForResponse = jest.fn().mockReturnValue(4);
+      TestClient.recordTokenUsage = jest.fn().mockResolvedValue(undefined);
+      TestClient.buildMessages.mockReturnValue({
+        prompt: [],
+        promptTokens: 132,
+        tokenCountMap: { res: 4 },
+      });
+      TestClient.sendCompletion.mockResolvedValue({
+        completion: [{ type: ContentTypes.ERROR, error: '403 status code (no body)' }],
+      });
+
+      const response = await TestClient.sendMessage('Hello', {});
+
+      expect(response.tokenCount).toBe(0);
+      expect(TestClient.recordTokenUsage).not.toHaveBeenCalled();
+    });
+
+    test('still estimates charges for partial text followed by an error', async () => {
+      TestClient.options.endpoint = 'agents';
+      TestClient.getStreamUsage = jest.fn().mockReturnValue(null);
+      TestClient.getTokenCountForResponse = jest.fn().mockReturnValue(10);
+      TestClient.recordTokenUsage = jest.fn().mockResolvedValue(undefined);
+      TestClient.buildMessages.mockReturnValue({ prompt: [], tokenCountMap: { res: 10 } });
+      TestClient.sendCompletion.mockResolvedValue({
+        completion: [
+          { type: ContentTypes.TEXT, text: 'Partial answer' },
+          { type: ContentTypes.ERROR, error: 'stream interrupted' },
+        ],
+      });
+
+      await TestClient.sendMessage('Hello', {});
+
+      expect(TestClient.recordTokenUsage).toHaveBeenCalled();
+    });
+
     test('should pass this.model to recordTokenUsage, not the agent ID from responseMessage.model', async () => {
       const actualModel = 'claude-opus-4-5';
       const agentId = 'agent_p5Z_IU6EIxBoqn1BoqLBp';

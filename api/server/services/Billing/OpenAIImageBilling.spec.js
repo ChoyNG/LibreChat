@@ -63,6 +63,22 @@ describe('OpenAIImageBilling', () => {
     ).toBe(6500);
   });
 
+  it.each(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])(
+    'charges %s usage and reserves credits before generation',
+    (model) => {
+      expect(
+        calculateImageCredits({
+          model,
+          usage: {
+            input_tokens_details: { text_tokens: 10, image_tokens: 20 },
+            output_tokens: 30,
+          },
+        }),
+      ).toBe(1110);
+      expect(estimateImageCredits({ model })).toBe(250000);
+    },
+  );
+
   it('calculates image edit credits from text, image, and output tokens', () => {
     expect(
       calculateImageCredits({

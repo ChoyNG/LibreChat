@@ -1087,10 +1087,18 @@ class BaseClient {
        * use the legacy token estimations.
        * @type {StreamUsage | null} */
       const usage = this.getStreamUsage != null ? this.getStreamUsage() : null;
+      const errorOnlyResponse =
+        !responseMessage.text &&
+        responseMessage.content?.length > 0 &&
+        responseMessage.content.every((part) => part.type === ContentTypes.ERROR);
 
       if (usage != null && Number(usage[this.outputTokensKey]) > 0) {
         responseMessage.tokenCount = usage[this.outputTokensKey];
         completionTokens = responseMessage.tokenCount;
+      } else if (usage == null && errorOnlyResponse) {
+        // A provider error without reported usage is not a billable model response.
+        responseMessage.tokenCount = 0;
+        completionTokens = 0;
       } else {
         responseMessage.tokenCount = this.getTokenCountForResponse(responseMessage);
         completionTokens = responseMessage.tokenCount;
